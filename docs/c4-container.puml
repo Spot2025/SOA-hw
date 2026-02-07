@@ -1,0 +1,76 @@
+@startuml C4_Container_Marketplace
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_WITH_LEGEND()
+LAYOUT_LEFT_RIGHT()
+
+title C4 Container Diagram — Marketplace Platform
+
+Person(buyer, "Покупатель", "Пользователь, который просматривает товары и оформляет заказы")
+Person(seller, "Продавец", "Пользователь, который управляет каталогом своих товаров")
+
+System_Boundary(marketplace, "Marketplace Platform") {
+
+    Container(api_gw, "API Gateway", "Nginx / Envoy", "Единая точка входа: маршрутизация запросов, rate-limiting, аутентификация токенов")
+
+    Container(user_svc, "User Service", "Go", "Регистрация, аутентификация, профили покупателей и продавцов")
+    ContainerDb(user_db, "User DB", "PostgreSQL", "Данные пользователей, роли, credentials")
+
+    Container(catalog_svc, "Catalog Service", "Go", "CRUD товаров, категории, поиск по каталогу")
+    ContainerDb(catalog_db, "Catalog DB", "PostgreSQL", "Товары, категории, остатки")
+
+    Container(feed_svc, "Feed Service", "Go / Python", "Персонализированная лента товаров на основе истории просмотров и покупок")
+    ContainerDb(feed_db, "Feed DB", "PostgreSQL", "История просмотров, предпочтения, скоры релевантности")
+
+    Container(order_svc, "Order Service", "Go", "Оформление заказов, управление жизненным циклом заказа")
+    ContainerDb(order_db, "Order DB", "PostgreSQL", "Заказы, позиции заказов, статусы")
+
+    Container(payment_svc, "Payment Service", "Go", "Расчёт стоимости, инициация и учёт платежей")
+    ContainerDb(payment_db, "Payment DB", "PostgreSQL", "Транзакции, балансы продавцов")
+
+    Container(notification_svc, "Notification Service", "Go", "Отправка уведомлений (email, push) о статусах заказов")
+
+    Container(message_broker, "Message Broker", "Apache Kafka", "Асинхронный обмен событиями между сервисами")
+}
+
+System_Ext(payment_provider, "Платёжный провайдер", "Внешняя платёжная система (Stripe, YooKassa)")
+System_Ext(email_provider, "Email / Push провайдер", "Внешний сервис отправки уведомлений (SendGrid, Firebase)")
+
+' --- Внешние пользователи → API Gateway ---
+Rel(buyer, api_gw, "Просматривает ленту, оформляет заказы", "HTTPS")
+Rel(seller, api_gw, "Управляет товарами", "HTTPS")
+
+' --- API Gateway → Сервисы (синхронно, REST/gRPC) ---
+Rel(api_gw, user_svc, "Аутентификация, профили", "REST / gRPC")
+Rel(api_gw, catalog_svc, "Каталог товаров", "REST / gRPC")
+Rel(api_gw, feed_svc, "Персональная лента", "REST / gRPC")
+Rel(api_gw, order_svc, "Заказы", "REST / gRPC")
+Rel(api_gw, payment_svc, "Платежи", "REST / gRPC")
+
+' --- Сервисы → Хранилища ---
+Rel(user_svc, user_db, "Читает / пишет", "SQL")
+Rel(catalog_svc, catalog_db, "Читает / пишет", "SQL")
+Rel(feed_svc, feed_db, "Читает / пишет", "SQL")
+Rel(order_svc, order_db, "Читает / пишет", "SQL")
+Rel(payment_svc, payment_db, "Читает / пишет", "SQL")
+
+' --- Синхронные межсервисные вызовы ---
+Rel(feed_svc, catalog_svc, "Получает данные о товарах", "gRPC")
+Rel(feed_svc, user_svc, "Получает предпочтения пользователя", "gRPC")
+Rel(order_svc, catalog_svc, "Проверяет наличие товара", "gRPC")
+Rel(order_svc, payment_svc, "Инициирует оплату", "gRPC")
+
+' --- Асинхронные события через Kafka ---
+Rel(order_svc, message_broker, "Публикует: OrderCreated, OrderStatusChanged", "Kafka")
+Rel(payment_svc, message_broker, "Публикует: PaymentCompleted, PaymentFailed", "Kafka")
+Rel(order_svc, message_broker, "Подписан на: PaymentCompleted, PaymentFailed", "Kafka")
+Rel(catalog_svc, message_broker, "Публикует: ProductUpdated, ProductCreated", "Kafka")
+
+Rel(notification_svc, message_broker, "Подписан на: OrderStatusChanged, PaymentCompleted, PaymentFailed", "Kafka")
+Rel(feed_svc, message_broker, "Подписан на: ProductUpdated, OrderCreated (для персонализации)", "Kafka")
+
+' --- Внешние системы ---
+Rel(payment_svc, payment_provider, "Проведение платежей", "HTTPS API")
+Rel(notification_svc, email_provider, "Отправка email / push", "HTTPS API")
+
+@enduml
