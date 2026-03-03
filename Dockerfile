@@ -1,0 +1,22 @@
+FROM golang:1.24-alpine AS builder
+
+RUN go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN oapi-codegen --package api \
+       -generate types,chi-server,spec \
+       -o internal/api/api.gen.go \
+       api/openapi.yaml \
+    && CGO_ENABLED=0 go build -o /server ./cmd/server
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=builder /server /server
+EXPOSE 8080
+ENTRYPOINT ["/server"]
