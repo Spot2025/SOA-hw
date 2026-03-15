@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package flight.v1;
+
+option go_package = "soa-hw/proto/gen/go/flight/v1;flightv1";
+
+import "google/protobuf/timestamp.proto";
+
+// FlightStatus — статус рейса
+enum FlightStatus {
+  FLIGHT_STATUS_UNSPECIFIED = 0;
+  FLIGHT_STATUS_SCHEDULED = 1;
+  FLIGHT_STATUS_DEPARTED = 2;
+  FLIGHT_STATUS_CANCELLED = 3;
+  FLIGHT_STATUS_COMPLETED = 4;
+}
+
+// ReservationStatus — статус резервации мест
+enum ReservationStatus {
+  RESERVATION_STATUS_UNSPECIFIED = 0;
+  RESERVATION_STATUS_ACTIVE = 1;
+  RESERVATION_STATUS_RELEASED = 2;
+  RESERVATION_STATUS_EXPIRED = 3;
+}
+
+// Flight — рейс
+message Flight {
+  int64 id = 1;
+  string flight_number = 2;
+  string airline = 3;
+  string origin = 4;       // IATA код, например VKO, LED
+  string destination = 5;  // IATA код
+  google.protobuf.Timestamp departure_time = 6;
+  google.protobuf.Timestamp arrival_time = 7;
+  int32 total_seats = 8;
+  int32 available_seats = 9;
+  string price = 10;       // decimal как string для точности
+  FlightStatus status = 11;
+}
+
+// SearchFlights
+message SearchFlightsRequest {
+  string origin = 1;       // обязательный
+  string destination = 2;  // обязательный
+  string date = 3;         // опционально, формат YYYY-MM-DD
+}
+
+message SearchFlightsResponse {
+  repeated Flight flights = 1;
+}
+
+// GetFlight
+message GetFlightRequest {
+  int64 id = 1;
+}
+
+message GetFlightResponse {
+  Flight flight = 1;
+}
+
+// ReserveSeats
+// Ошибки: NOT_FOUND (рейс), RESOURCE_EXHAUSTED (недостаточно мест)
+message ReserveSeatsRequest {
+  int64 flight_id = 1;
+  int32 seat_count = 2;
+  string booking_id = 3;   // ID бронирования из Booking Service (для идемпотентности)
+}
+
+message ReserveSeatsResponse {
+  int64 reservation_id = 1;
+  string booking_id = 2;
+  int64 flight_id = 3;
+  int32 seat_count = 4;
+  ReservationStatus status = 5;
+}
+
+// ReleaseReservation
+// Ошибки: NOT_FOUND (резервация не найдена или уже отменена)
+message ReleaseReservationRequest {
+  string booking_id = 1;
+}
+
+message ReleaseReservationResponse {
+  string booking_id = 1;
+  ReservationStatus previous_status = 2;
+}
+
+service FlightService {
+  rpc SearchFlights(SearchFlightsRequest) returns (SearchFlightsResponse);
+  rpc GetFlight(GetFlightRequest) returns (GetFlightResponse);
+  rpc ReserveSeats(ReserveSeatsRequest) returns (ReserveSeatsResponse);
+  rpc ReleaseReservation(ReleaseReservationRequest) returns (ReleaseReservationResponse);
+}

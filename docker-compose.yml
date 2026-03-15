@@ -1,0 +1,92 @@
+services:
+  postgres-flight:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: flight_db
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  postgres-booking:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: booking_db
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+
+  migrate-flight:
+    image: migrate/migrate:v4.17.0
+    command: ["-path", "/migrations", "-database", "postgres://postgres:postgres@postgres-flight:5432/flight_db?sslmode=disable", "up"]
+    volumes:
+      - ./flight-service/migrations:/migrations
+    depends_on:
+      postgres-flight: { condition: service_healthy }
+    restart: "no"
+
+  migrate-booking:
+    image: migrate/migrate:v4.17.0
+    command: ["-path", "/migrations", "-database", "postgres://postgres:postgres@postgres-booking:5432/booking_db?sslmode=disable", "up"]
+    volumes:
+      - ./booking-service/migrations:/migrations
+    depends_on:
+      postgres-booking: { condition: service_healthy }
+    restart: "no"
+
+  flight-service:
+    build:
+      context: .
+      dockerfile: flight-service/Dockerfile
+    depends_on:
+      postgres-flight: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate-flight: { condition: service_completed_successfully }
+    environment:
+      GRPC_ADDR: ":50051"
+      FLIGHT_DB_DSN: "postgres://postgres:postgres@postgres-flight:5432/flight_db?sslmode=disable"
+      REDIS_ADDR: "redis:6379"
+      CACHE_TTL_MIN: "5"
+      FLIGHT_GRPC_API_KEY: "${FLIGHT_GRPC_API_KEY:-secret-api-key}"
+    ports:
+      - "50051:50051"
+
+  booking-service:
+    build:
+      context: .
+      dockerfile: booking-service/Dockerfile
+    depends_on:
+      postgres-booking: { condition: service_healthy }
+      migrate-booking: { condition: service_completed_successfully }
+      flight-service: { condition: service_started }
+    environment:
+      HTTP_ADDR: ":8080"
+      BOOKING_DB_DSN: "postgres://postgres:postgres@postgres-booking:5432/booking_db?sslmode=disable"
+      FLIGHT_GRPC_ADDR: "flight-service:50051"
+      FLIGHT_GRPC_API_KEY: "${FLIGHT_GRPC_API_KEY:-secret-api-key}"
+      CIRCUIT_BREAKER_THRESHOLD: "5"
+      CIRCUIT_BREAKER_TIMEOUT_SEC: "15"
+      RETRY_MAX_ATTEMPTS: "3"
+    ports:
+      - "8080:8080"
