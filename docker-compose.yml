@@ -1,0 +1,161 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "19092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:19092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:29092 || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic warehouse-events --replication-factor 1 --partitions 3
+        kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic warehouse-events-dlq --replication-factor 1 --partitions 1
+
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.5.0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:29092
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/subjects || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  cassandra:
+    image: cassandra:4.1
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: warehouse
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "nodetool status | grep -q UN"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  cassandra-init:
+    image: cassandra:4.1
+    depends_on:
+      cassandra:
+        condition: service_healthy
+    volumes:
+      - ./cassandra/schema.cql:/schema.cql:ro
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        set -e
+        for i in $$(seq 1 90); do
+          if cqlsh cassandra 9042 -e "DESCRIBE KEYSPACES" >/dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+        done
+        cqlsh cassandra 9042 -f /schema.cql
+
+  schema-init:
+    image: python:3.11-slim
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    volumes:
+      - ./schemas:/schemas:ro
+      - ./scripts/register_schema.py:/register_schema.py:ro
+    environment:
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      AVRO_SCHEMA_PATH: /schemas/WarehouseEvent.avsc
+      SUBJECT: warehouse-events-value
+    entrypoint: ["python", "/register_schema.py"]
+
+  consumer:
+    build: ./consumer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_healthy
+      cassandra-init:
+        condition: service_completed_successfully
+      schema-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KAFKA_TOPIC: warehouse-events
+      KAFKA_DLQ_TOPIC: warehouse-events-dlq
+      KAFKA_GROUP_ID: warehouse-state-consumer
+      CASSANDRA_HOSTS: cassandra
+      CASSANDRA_KEYSPACE: warehouse
+      CASSANDRA_PORT: "9042"
+    restart: unless-stopped
+
+  producer:
+    build: ./producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      schema-registry:
+        condition: service_healthy
+      schema-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./schemas:/schemas:ro
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KAFKA_TOPIC: warehouse-events
+      AVRO_SCHEMA_PATH: /schemas/WarehouseEvent.avsc
+      PRODUCER_MODE: ${PRODUCER_MODE:-demo}
+    restart: unless-stopped
+
+networks:
+  default:
+    name: warehouse-net
