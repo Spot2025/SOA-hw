@@ -13,11 +13,14 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"soa-hw/booking-service/internal/config"
 	"soa-hw/booking-service/internal/grpcclient"
 	"soa-hw/booking-service/internal/handlers"
 	"soa-hw/booking-service/internal/middleware"
 	"soa-hw/booking-service/internal/repository"
+	pkgmetrics "soa-hw/pkg/metrics"
 )
 
 func main() {
@@ -56,8 +59,13 @@ func main() {
 	mux.HandleFunc("GET /bookings/{id}", h.GetBooking)
 	mux.HandleFunc("POST /bookings/{id}/cancel", h.CancelBooking)
 	mux.HandleFunc("GET /bookings", h.ListBookings)
+	mux.Handle("GET /metrics", promhttp.Handler())
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	})
 
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: pkgmetrics.Middleware(mux)}
 	go func() {
 		log.Info("booking service listening", "addr", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

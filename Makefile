@@ -1,4 +1,4 @@
-.PHONY: proto build migrate-up migrate-down docker-up docker-down
+.PHONY: proto build migrate-up migrate-down docker-up docker-down test test-unit test-integration test-e2e load-test validate-metrics
 
 PROTO_DIR := proto
 PROTO_GEN := proto/gen/go/flight/v1
@@ -17,6 +17,23 @@ proto:
 build: proto
 	go build -o bin/flight-service ./flight-service/cmd/server
 	go build -o bin/booking-service ./booking-service/cmd/server
+
+test-unit:
+	go test -short -count=1 ./booking-service/... ./flight-service/... ./pkg/...
+
+test-integration:
+	go test -count=1 ./booking-service/test/integration/...
+
+test-e2e:
+	go test -count=1 ./tests/e2e/...
+
+test: test-unit test-integration
+
+load-test:
+	k6 run loadtests/booking.js
+
+validate-metrics:
+	bash scripts/validate-metrics.sh
 
 # Локальный запуск миграций (Postgres на localhost). Использует образ migrate/migrate.
 migrate-up:

@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build services
+        run: |
+          go build -o /tmp/flight-service ./flight-service/cmd/server
+          go build -o /tmp/booking-service ./booking-service/cmd/server
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        package:
+          - ./booking-service/...
+          - ./flight-service/...
+          - ./pkg/...
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Run unit tests
+        run: go test -short -count=1 -v ${{ matrix.package }}
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Run integration tests
+        run: go test -count=1 -v ./booking-service/test/integration/...
+
+  e2e-load-metrics:
+    runs-on: ubuntu-latest
+    needs: [unit-tests, integration-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Start stack
+        run: docker compose up -d --build --wait
+      - name: Wait for booking-service
+        run: bash scripts/wait-for-services.sh
+      - name: Run E2E tests
+        run: go test -count=1 -v ./tests/e2e/...
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Run load tests
+        run: docker run --rm --network host -v "$PWD/loadtests:/loadtests" grafana/k6:0.52.0 run /loadtests/booking.js
+      - name: Validate Prometheus metrics
+        run: bash scripts/validate-metrics.sh
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts
+          path: |
+            loadtest-summary.json
+            artifacts/
+      - name: Show compose logs on failure
+        if: failure()
+        run: docker compose logs --no-color

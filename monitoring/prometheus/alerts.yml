@@ -1,0 +1,46 @@
+groups:
+  - name: soa_hw_alerts
+    rules:
+      - alert: HighHTTPErrorRate
+        expr: |
+          (
+            sum(rate(soa_hw_http_request_errors_total[5m]))
+            /
+            clamp_min(sum(rate(soa_hw_http_requests_total[5m])), 0.001)
+          ) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate on booking-service"
+          description: "HTTP error rate is above 5% for 1 minute."
+
+      - alert: HighHTTPLatencyP95
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(soa_hw_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP p95 latency on booking-service"
+          description: "HTTP p95 latency exceeds 1s for 1 minute."
+
+      - alert: BookingServiceDown
+        expr: up{job="booking-service"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "booking-service is down"
+          description: "Prometheus cannot scrape booking-service metrics."
+
+      - alert: FlightServiceDown
+        expr: up{job="flight-service"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "flight-service is down"
+          description: "Prometheus cannot scrape flight-service metrics."

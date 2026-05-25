@@ -11,17 +11,16 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"soa-hw/booking-service/internal/grpcclient"
 	"soa-hw/booking-service/internal/repository"
 )
 
 type Handlers struct {
 	repo   *repository.BookingRepo
-	flight *grpcclient.Client
+	flight FlightAPI
 	log    *slog.Logger
 }
 
-func New(repo *repository.BookingRepo, flight *grpcclient.Client, log *slog.Logger) *Handlers {
+func New(repo *repository.BookingRepo, flight FlightAPI, log *slog.Logger) *Handlers {
 	if log == nil {
 		log = slog.Default()
 	}

@@ -7,11 +7,12 @@ import (
 )
 
 type Config struct {
-	GRPCAddr     string
-	DBConn       string
-	RedisAddr    string
-	RedisTTL     time.Duration
-	APIKey       string // для межсервисной аутентификации
+	GRPCAddr    string
+	MetricsAddr string
+	DBConn      string
+	RedisAddr   string
+	RedisTTL    time.Duration
+	APIKey      string // для межсервисной аутентификации
 }
 
 func Load() *Config {
@@ -22,8 +23,9 @@ func Load() *Config {
 		}
 	}
 	return &Config{
-		GRPCAddr:  getEnv("GRPC_ADDR", ":50051"),
-		DBConn:    getEnv("FLIGHT_DB_DSN", "postgres://postgres:postgres@localhost:5432/flight_db?sslmode=disable"),
+		GRPCAddr:    getEnv("GRPC_ADDR", ":50051"),
+		MetricsAddr: getEnv("METRICS_ADDR", ":9090"),
+		DBConn:      getEnv("FLIGHT_DB_DSN", "postgres://postgres:postgres@localhost:5432/flight_db?sslmode=disable"),
 		RedisAddr: getEnv("REDIS_ADDR", "localhost:6379"),
 		RedisTTL:  time.Duration(ttlMin) * time.Minute,
 		APIKey:    os.Getenv("FLIGHT_GRPC_API_KEY"),
